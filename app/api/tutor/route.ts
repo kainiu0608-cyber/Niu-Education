@@ -4,9 +4,7 @@ import JSZip from "jszip";
 
 export const runtime = "nodejs";
 
-const client = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-});
+const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 type ChatMessage = {
   role: "user" | "assistant";
@@ -26,35 +24,27 @@ function cleanXmlText(xml: string) {
 async function extractOfficeText(file: File) {
   const buffer = await file.arrayBuffer();
   const zip = await JSZip.loadAsync(buffer);
-
   const parts: string[] = [];
 
   for (const path of Object.keys(zip.files)) {
-    const isDocxText =
-      path.startsWith("word/") && path.endsWith(".xml");
+    const isDocx = path.startsWith("word/") && path.endsWith(".xml");
+    const isPptx = path.startsWith("ppt/slides/") && path.endsWith(".xml");
 
-    const isPptxText =
-      path.startsWith("ppt/slides/") && path.endsWith(".xml");
-
-    if (isDocxText || isPptxText) {
+    if (isDocx || isPptx) {
       const xml = await zip.files[path].async("text");
       const text = cleanXmlText(xml);
       if (text) parts.push(text);
     }
   }
 
-  return parts.join("\n\n").slice(0, 25000);
-}
-
-async function extractTextFile(file: File) {
-  return (await file.text()).slice(0, 25000);
+  return parts.join("\n\n").slice(0, 30000);
 }
 
 export async function POST(req: NextRequest) {
   try {
     if (!process.env.OPENAI_API_KEY) {
       return NextResponse.json(
-        { error: "Missing OPENAI_API_KEY in .env.local or Vercel Environment Variables." },
+        { error: "Missing OPENAI_API_KEY in Vercel or .env.local." },
         { status: 500 }
       );
     }
@@ -85,13 +75,13 @@ Mode: ${mode}
 Subject: ${subject}
 Grade level: ${grade}
 
-Recent conversation:
+Conversation so far:
 ${history
-  .slice(-10)
+  .slice(-14)
   .map((m) => `${m.role.toUpperCase()}: ${m.content}`)
   .join("\n\n")}
 
-Student message:
+New student message:
 ${message || "The student uploaded homework and wants help."}
         `,
       },
@@ -115,10 +105,7 @@ ${message || "The student uploaded homework and wants help."}
           image_url: dataUrl,
           detail: "high",
         });
-      } else if (
-        file.name.endsWith(".docx") ||
-        file.name.endsWith(".pptx")
-      ) {
+      } else if (file.name.endsWith(".docx") || file.name.endsWith(".pptx")) {
         const text = await extractOfficeText(file);
         extractedFilesText += `\n\n--- FILE: ${file.name} ---\n${text}`;
       } else if (
@@ -126,20 +113,16 @@ ${message || "The student uploaded homework and wants help."}
         file.name.endsWith(".txt") ||
         file.name.endsWith(".md")
       ) {
-        const text = await extractTextFile(file);
-        extractedFilesText += `\n\n--- FILE: ${file.name} ---\n${text}`;
+        extractedFilesText += `\n\n--- FILE: ${file.name} ---\n${(await file.text()).slice(0, 30000)}`;
       } else {
-        extractedFilesText += `\n\n--- FILE: ${file.name} ---\nThis file type was uploaded but text could not be extracted yet. Ask the student for a screenshot or text copy if needed.`;
+        extractedFilesText += `\n\n--- FILE: ${file.name} ---\nUnsupported file type.`;
       }
     }
 
     if (extractedFilesText) {
       content.push({
         type: "input_text",
-        text: `
-Uploaded document text:
-${extractedFilesText}
-        `,
+        text: `Uploaded file text:\n${extractedFilesText}`,
       });
     }
 
@@ -151,64 +134,79 @@ ${extractedFilesText}
           content: `
 You are Niu Education, a premium AI tutor.
 
-You are better than a basic homework solver because you:
-- teach step by step
-- explain mistakes
-- create practice problems
-- make study guides
-- quiz the student
-- summarize uploaded documents
-- explain PowerPoints and Word docs
-- keep the answer clean and readable
+Main job:
+Teach students clearly, step by step, without being a cheating machine.
 
 Modes:
 teach = full step-by-step explanation
-hints = hints first, do not immediately give final answer
-check = check the student's work and fix mistakes
-study = study guide with key ideas, examples, practice
-quiz = quiz the student and wait for answers
-quick = short but still clear
-explain = explain like they are confused
+hints = hints first, avoid instant final answer
+check = check student's work and explain mistakes
+study = make a study guide, notes, practice
+quiz = quiz the student and wait
+quick = short but clear
+explain = explain simply
 
-Style:
-- Sound like a helpful human tutor.
-- Explain like the student is around the selected grade level.
-- Use clean headings.
-- Do not dump a giant wall of text.
-- If a document is uploaded, summarize it and help answer questions from it.
-- If a slide deck is uploaded, organize by slide/topic if possible.
-- If something is unclear, say exactly what is unclear.
+Quality rules:
+- Be organized.
+- Use headings.
+- Avoid huge walls of text.
+- If an image/file is uploaded, analyze it.
+- For PowerPoints, summarize by slide/topic.
+- For Word docs, summarize and answer questions from it.
+- End with a helpful next action.
 
 Math formatting:
-- VERY IMPORTANT: use dollar-sign LaTeX only.
-- Inline math must use $...$.
-- Big equations must use $$...$$.
-- Do NOT use \$begin:math:text$ \.\.\. \\$end:math:text$.
-- Do NOT use \$begin:math:display$ \.\.\. \\$end:math:display$.
+- Use dollar-sign LaTeX only.
+- Inline math: $...$
+- Big equations: $$...$$
 - Use \\frac{}{} for stacked fractions.
-- Use \\sqrt{} for square roots.
-- Use x^2 for exponents.
-- Never show raw ugly math like \\frac{-b \\pm... unless it is inside $...$ or $$...$$.
+- Use \\sqrt{} for roots.
+- Never leave raw ugly LaTeX outside dollar signs.
 
-End with one helpful follow-up like:
-"Want me to quiz you on this?" or "Want me to check your answer?"
+Also create metadata:
+At the VERY END, include a hidden JSON block exactly like this:
+NIU_METADATA_START
+{"title":"short useful title","summary":"1 sentence summary of the whole conversation"}
+NIU_METADATA_END
           `,
         },
-        {
-          role: "user",
-          content,
-        },
+        { role: "user", content },
       ],
-      max_output_tokens: 2600,
+      max_output_tokens: 3000,
     });
 
-    return NextResponse.json({ answer: response.output_text });
+    const full = response.output_text || "";
+
+    const metadataMatch = full.match(
+      /NIU_METADATA_START\s*([\s\S]*?)\s*NIU_METADATA_END/
+    );
+
+    let answer = full
+      .replace(/NIU_METADATA_START[\s\S]*?NIU_METADATA_END/g, "")
+      .trim();
+
+    let chatTitle = "Homework chat";
+    let chatSummary = "A saved Niu Education tutoring conversation.";
+
+    if (metadataMatch?.[1]) {
+      try {
+        const metadata = JSON.parse(metadataMatch[1]);
+        chatTitle = metadata.title || chatTitle;
+        chatSummary = metadata.summary || chatSummary;
+      } catch {}
+    }
+
+    return NextResponse.json({
+      answer,
+      chatTitle,
+      chatSummary,
+    });
   } catch (error: any) {
     return NextResponse.json(
       {
         error:
           error?.message ||
-          "Something went wrong. Try again with a clearer screenshot or smaller file.",
+          "Something went wrong. Try a clearer screenshot or smaller file.",
       },
       { status: 500 }
     );

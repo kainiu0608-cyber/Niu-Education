@@ -1,42 +1,17 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  Send,
-  Paperclip,
-  X,
-  Sparkles,
-  Trash2,
-  Copy,
-  ImagePlus,
-  Brain,
-  BookOpen,
-  CheckCircle,
-  Lightbulb,
-  Zap,
-  GraduationCap,
-  Calculator,
-  MessageSquare,
-  Target,
-  Wand2,
-  FileText,
-  Presentation,
-  Image as ImageIcon,
-  Plus,
-  History,
+  Send, Paperclip, X, Sparkles, Trash2, Copy, ImagePlus, Brain,
+  BookOpen, CheckCircle, Lightbulb, Zap, GraduationCap, MessageSquare,
+  Target, Wand2, FileText, Presentation, Image as ImageIcon, Plus,
+  History, Pin, Search, Download, RotateCcw, Pencil, Menu
 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
 
-type Mode =
-  | "teach"
-  | "hints"
-  | "check"
-  | "study"
-  | "quiz"
-  | "quick"
-  | "explain";
+type Mode = "teach" | "hints" | "check" | "study" | "quiz" | "quick" | "explain";
 
 type Message = {
   role: "user" | "assistant";
@@ -48,8 +23,11 @@ type Message = {
 type Chat = {
   id: string;
   title: string;
+  summary: string;
   messages: Message[];
   createdAt: string;
+  updatedAt: string;
+  pinned?: boolean;
 };
 
 const starterMessage: Message = {
@@ -65,19 +43,12 @@ const modes = [
   { id: "study", name: "Study", icon: BookOpen, desc: "Study guide" },
   { id: "quiz", name: "Quiz", icon: Target, desc: "Test me" },
   { id: "quick", name: "Quick", icon: Zap, desc: "Fast answer" },
-  { id: "explain", name: "Explain", icon: MessageSquare, desc: "Make it simple" },
+  { id: "explain", name: "Explain", icon: MessageSquare, desc: "Make simple" },
 ] as const;
 
 const subjects = [
-  "Auto-detect",
-  "Math",
-  "Algebra",
-  "Geometry",
-  "Biology",
-  "Chemistry",
-  "Science",
-  "English",
-  "History",
+  "Auto-detect", "Math", "Algebra", "Geometry", "Biology",
+  "Chemistry", "Science", "English", "History"
 ];
 
 const starters = [
@@ -99,15 +70,20 @@ function formatMath(text: string) {
 
 function fileIcon(fileName: string) {
   if (fileName.endsWith(".pptx")) return <Presentation size={18} />;
-  if (fileName.endsWith(".docx") || fileName.endsWith(".txt")) {
+  if (fileName.endsWith(".docx") || fileName.endsWith(".txt") || fileName.endsWith(".md")) {
     return <FileText size={18} />;
   }
   return <ImageIcon size={18} />;
 }
 
-function makeTitle(text: string) {
-  const cleaned = text.trim() || "New homework chat";
-  return cleaned.length > 34 ? cleaned.slice(0, 34) + "..." : cleaned;
+function downloadText(filename: string, text: string) {
+  const blob = new Blob([text], { type: "text/markdown" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
 }
 
 export default function Home() {
@@ -122,49 +98,36 @@ export default function Home() {
   const [subject, setSubject] = useState("Auto-detect");
   const [grade, setGrade] = useState("middle/high school");
   const [loading, setLoading] = useState(false);
+  const [chatSearch, setChatSearch] = useState("");
+  const [sidebarOpen, setSidebarOpen] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const bottomRef = useRef<HTMLDivElement | null>(null);
+
+  const filteredChats = useMemo(() => {
+    return chats
+      .filter((chat) => {
+        const q = chatSearch.toLowerCase();
+        return (
+          chat.title.toLowerCase().includes(q) ||
+          chat.summary.toLowerCase().includes(q)
+        );
+      })
+      .sort((a, b) => {
+        if (a.pinned && !b.pinned) return -1;
+        if (!a.pinned && b.pinned) return 1;
+        return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();
+      });
+  }, [chats, chatSearch]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, loading]);
 
   useEffect(() => {
-    const savedChats = localStorage.getItem("niu-education-chats");
+    const savedChats = localStorage.getItem("niu-education-chats-v2");
     if (savedChats) setChats(JSON.parse(savedChats));
   }, []);
-
-  function saveChats(nextChats: Chat[]) {
-    setChats(nextChats);
-    localStorage.setItem("niu-education-chats", JSON.stringify(nextChats));
-  }
-
-  function saveCurrentChat(nextMessages: Message[]) {
-    const hasRealMessage = nextMessages.some((m) => m.role === "user");
-    if (!hasRealMessage) return;
-
-    const firstUser = nextMessages.find((m) => m.role === "user");
-    const title = makeTitle(firstUser?.content || "New homework chat");
-
-    if (activeChatId) {
-      const updated = chats.map((chat) =>
-        chat.id === activeChatId
-          ? { ...chat, title, messages: nextMessages }
-          : chat
-      );
-      saveChats(updated);
-    } else {
-      const newChat: Chat = {
-        id: crypto.randomUUID(),
-        title,
-        messages: nextMessages,
-        createdAt: new Date().toLocaleString(),
-      };
-      setActiveChatId(newChat.id);
-      saveChats([newChat, ...chats]);
-    }
-  }
 
   useEffect(() => {
     function pasteImage(e: ClipboardEvent) {
@@ -179,12 +142,51 @@ export default function Home() {
     return () => window.removeEventListener("paste", pasteImage);
   }, []);
 
+  function saveChats(nextChats: Chat[]) {
+    setChats(nextChats);
+    localStorage.setItem("niu-education-chats-v2", JSON.stringify(nextChats));
+  }
+
+  function upsertChat(nextMessages: Message[], title?: string, summary?: string) {
+    const hasUserMessage = nextMessages.some((m) => m.role === "user");
+    if (!hasUserMessage) return;
+
+    const now = new Date().toLocaleString();
+
+    if (activeChatId) {
+      const updated = chats.map((chat) =>
+        chat.id === activeChatId
+          ? {
+              ...chat,
+              title: title || chat.title,
+              summary: summary || chat.summary,
+              messages: nextMessages,
+              updatedAt: now,
+            }
+          : chat
+      );
+      saveChats(updated);
+    } else {
+      const newChat: Chat = {
+        id: crypto.randomUUID(),
+        title: title || "New tutoring chat",
+        summary: summary || "Niu Education tutoring conversation.",
+        messages: nextMessages,
+        createdAt: now,
+        updatedAt: now,
+      };
+      setActiveChatId(newChat.id);
+      saveChats([newChat, ...chats]);
+    }
+  }
+
   function startNewChat() {
     setMessages([starterMessage]);
     setActiveChatId(null);
     setInput("");
     setFiles([]);
     setPreviews([]);
+    setSidebarOpen(false);
   }
 
   function openChat(chat: Chat) {
@@ -193,15 +195,41 @@ export default function Home() {
     setInput("");
     setFiles([]);
     setPreviews([]);
+    setSidebarOpen(false);
   }
 
   function deleteChat(chatId: string) {
     const updated = chats.filter((chat) => chat.id !== chatId);
     saveChats(updated);
+    if (activeChatId === chatId) startNewChat();
+  }
 
-    if (activeChatId === chatId) {
-      startNewChat();
-    }
+  function togglePin(chatId: string) {
+    saveChats(
+      chats.map((chat) =>
+        chat.id === chatId ? { ...chat, pinned: !chat.pinned } : chat
+      )
+    );
+  }
+
+  function renameChat(chatId: string) {
+    const chat = chats.find((c) => c.id === chatId);
+    const newTitle = prompt("Rename chat:", chat?.title || "");
+    if (!newTitle) return;
+
+    saveChats(
+      chats.map((chat) =>
+        chat.id === chatId ? { ...chat, title: newTitle } : chat
+      )
+    );
+  }
+
+  function exportCurrentChat() {
+    const text = messages
+      .map((m) => `## ${m.role === "user" ? "You" : "Niu Education"}\n\n${m.content}`)
+      .join("\n\n---\n\n");
+
+    downloadText("niu-education-chat.md", text);
   }
 
   function addFiles(selected: FileList | File[] | null) {
@@ -231,8 +259,16 @@ export default function Home() {
     setPreviews((prev) => prev.filter((_, i) => i !== index));
   }
 
-  async function sendMessage(customText?: string) {
-    const text = customText || input;
+  async function sendMessage(customText?: string, regenerate = false) {
+    let text = customText || input;
+    let baseMessages = messages;
+
+    if (regenerate) {
+      const lastUserIndex = [...messages].map((m) => m.role).lastIndexOf("user");
+      if (lastUserIndex === -1) return;
+      text = messages[lastUserIndex].content;
+      baseMessages = messages.slice(0, lastUserIndex);
+    }
 
     if (!text.trim() && files.length === 0) return;
 
@@ -248,10 +284,12 @@ export default function Home() {
       previews: imagePreviews,
     };
 
-    const nextMessages = [...messages, userMessage];
+    const nextMessages = regenerate
+      ? [...baseMessages, userMessage]
+      : [...messages, userMessage];
 
     setMessages(nextMessages);
-    saveCurrentChat(nextMessages);
+    upsertChat(nextMessages);
 
     setInput("");
     setFiles([]);
@@ -266,7 +304,7 @@ export default function Home() {
     formData.append(
       "history",
       JSON.stringify(
-        messages.map((m) => ({
+        baseMessages.map((m) => ({
           role: m.role,
           content: m.content,
         }))
@@ -276,11 +314,7 @@ export default function Home() {
     files.forEach((file) => formData.append("files", file));
 
     try {
-      const res = await fetch("/api/tutor", {
-        method: "POST",
-        body: formData,
-      });
-
+      const res = await fetch("/api/tutor", { method: "POST", body: formData });
       const data = await res.json();
 
       const finalMessages = [
@@ -292,148 +326,170 @@ export default function Home() {
       ];
 
       setMessages(finalMessages);
-      saveCurrentChat(finalMessages);
+      upsertChat(finalMessages, data.chatTitle, data.chatSummary);
     } catch {
       const finalMessages = [
         ...nextMessages,
         {
           role: "assistant" as const,
-          content:
-            "Something broke. Try again with a clearer screenshot or smaller file.",
+          content: "Something broke. Try again with a clearer screenshot or smaller file.",
         },
       ];
 
       setMessages(finalMessages);
-      saveCurrentChat(finalMessages);
+      upsertChat(finalMessages);
     } finally {
       setLoading(false);
     }
   }
+
+  const Sidebar = (
+    <aside className="flex h-full w-80 shrink-0 flex-col rounded-[2rem] border border-white/15 bg-white/10 p-5 shadow-2xl backdrop-blur-xl">
+      <div className="mb-5">
+        <div className="mb-3 flex h-16 w-16 items-center justify-center rounded-3xl bg-gradient-to-br from-cyan-300 to-purple-400 text-black shadow-xl">
+          <GraduationCap size={34} />
+        </div>
+
+        <h1 className="text-4xl font-black leading-tight">Niu Education</h1>
+        <p className="mt-2 text-sm text-gray-300">
+          Premium AI tutor with chats, docs, slides, screenshots, quizzes, and study tools.
+        </p>
+      </div>
+
+      <button
+        onClick={startNewChat}
+        className="mb-4 flex w-full items-center justify-center gap-2 rounded-2xl bg-cyan-300 px-4 py-3 font-black text-black hover:bg-cyan-200"
+      >
+        <Plus size={18} />
+        New chat
+      </button>
+
+      <div className="mb-4 rounded-2xl border border-white/10 bg-black/20 p-3">
+        <div className="mb-3 flex items-center gap-2 font-black">
+          <History size={18} />
+          Recent chats
+        </div>
+
+        <div className="mb-3 flex items-center gap-2 rounded-xl border border-white/10 bg-black/30 px-3 py-2">
+          <Search size={16} />
+          <input
+            value={chatSearch}
+            onChange={(e) => setChatSearch(e.target.value)}
+            placeholder="Search chats..."
+            className="w-full bg-transparent text-sm outline-none placeholder:text-gray-500"
+          />
+        </div>
+
+        <div className="max-h-56 space-y-2 overflow-y-auto">
+          {filteredChats.length === 0 ? (
+            <p className="text-sm text-gray-400">No saved chats yet.</p>
+          ) : (
+            filteredChats.map((chat) => (
+              <div
+                key={chat.id}
+                className={`group rounded-xl border p-2 ${
+                  activeChatId === chat.id
+                    ? "border-cyan-300 bg-cyan-300 text-black"
+                    : "border-white/10 bg-white/5"
+                }`}
+              >
+                <button onClick={() => openChat(chat)} className="w-full text-left">
+                  <p className="truncate text-sm font-black">
+                    {chat.pinned ? "📌 " : ""}
+                    {chat.title}
+                  </p>
+                  <p className="line-clamp-2 text-xs opacity-75">{chat.summary}</p>
+                  <p className="mt-1 text-[10px] opacity-60">{chat.updatedAt}</p>
+                </button>
+
+                <div className="mt-2 flex gap-1">
+                  <button onClick={() => togglePin(chat.id)} className="rounded-lg p-1 hover:bg-white/20">
+                    <Pin size={13} />
+                  </button>
+                  <button onClick={() => renameChat(chat.id)} className="rounded-lg p-1 hover:bg-white/20">
+                    <Pencil size={13} />
+                  </button>
+                  <button onClick={() => deleteChat(chat.id)} className="rounded-lg p-1 hover:bg-red-500 hover:text-white">
+                    <X size={13} />
+                  </button>
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+      </div>
+
+      <label className="mb-2 text-xs font-bold text-gray-400">Subject</label>
+      <select
+        value={subject}
+        onChange={(e) => setSubject(e.target.value)}
+        className="mb-4 rounded-2xl border border-white/10 bg-black/30 p-3 text-white outline-none"
+      >
+        {subjects.map((s) => (
+          <option key={s}>{s}</option>
+        ))}
+      </select>
+
+      <label className="mb-2 text-xs font-bold text-gray-400">Level</label>
+      <select
+        value={grade}
+        onChange={(e) => setGrade(e.target.value)}
+        className="mb-5 rounded-2xl border border-white/10 bg-black/30 p-3 text-white outline-none"
+      >
+        <option>elementary school</option>
+        <option>middle school</option>
+        <option>middle/high school</option>
+        <option>high school</option>
+        <option>college</option>
+      </select>
+
+      <div className="space-y-2 overflow-y-auto">
+        {modes.map((item) => {
+          const Icon = item.icon;
+          return (
+            <button
+              key={item.id}
+              onClick={() => setMode(item.id)}
+              className={`w-full rounded-2xl border p-3 text-left transition ${
+                mode === item.id
+                  ? "border-cyan-300 bg-cyan-300 text-black"
+                  : "border-white/10 bg-black/20 hover:bg-white/10"
+              }`}
+            >
+              <div className="flex items-center gap-3">
+                <Icon size={19} />
+                <div>
+                  <p className="font-black">{item.name}</p>
+                  <p className="text-xs opacity-70">{item.desc}</p>
+                </div>
+              </div>
+            </button>
+          );
+        })}
+      </div>
+    </aside>
+  );
 
   return (
     <main className="min-h-screen overflow-hidden bg-[#050716] text-white">
       <div className="fixed inset-0 -z-10 bg-[radial-gradient(circle_at_top_left,#22d3ee80,transparent_30%),radial-gradient(circle_at_top_right,#a855f780,transparent_32%),radial-gradient(circle_at_bottom,#f9731680,transparent_35%)]" />
 
       <section className="mx-auto flex h-screen w-full max-w-7xl gap-5 p-4">
-        <aside className="hidden w-80 shrink-0 flex-col rounded-[2rem] border border-white/15 bg-white/10 p-5 shadow-2xl backdrop-blur-xl lg:flex">
-          <div className="mb-5">
-            <div className="mb-3 flex h-16 w-16 items-center justify-center rounded-3xl bg-gradient-to-br from-cyan-300 to-purple-400 text-black shadow-xl">
-              <GraduationCap size={34} />
-            </div>
+        <div className="hidden lg:block">{Sidebar}</div>
 
-            <h1 className="text-4xl font-black leading-tight">
-              Niu Education
-            </h1>
-
-            <p className="mt-2 text-sm text-gray-300">
-              Homework, screenshots, Word docs, PowerPoints, study guides, and quizzes.
-            </p>
-          </div>
-
-          <button
-            onClick={startNewChat}
-            className="mb-4 flex w-full items-center justify-center gap-2 rounded-2xl bg-cyan-300 px-4 py-3 font-black text-black hover:bg-cyan-200"
-          >
-            <Plus size={18} />
-            New chat
-          </button>
-
-          <div className="mb-5 rounded-2xl border border-white/10 bg-black/20 p-3">
-            <div className="mb-3 flex items-center gap-2 font-black">
-              <History size={18} />
-              Recent chats
-            </div>
-
-            <div className="max-h-44 space-y-2 overflow-y-auto">
-              {chats.length === 0 ? (
-                <p className="text-sm text-gray-400">No saved chats yet.</p>
-              ) : (
-                chats.map((chat) => (
-                  <div
-                    key={chat.id}
-                    className={`group flex items-center gap-2 rounded-xl border p-2 ${
-                      activeChatId === chat.id
-                        ? "border-cyan-300 bg-cyan-300 text-black"
-                        : "border-white/10 bg-white/5"
-                    }`}
-                  >
-                    <button
-                      onClick={() => openChat(chat)}
-                      className="min-w-0 flex-1 text-left"
-                    >
-                      <p className="truncate text-sm font-bold">{chat.title}</p>
-                      <p className="truncate text-xs opacity-70">
-                        {chat.createdAt}
-                      </p>
-                    </button>
-
-                    <button
-                      onClick={() => deleteChat(chat.id)}
-                      className="rounded-lg p-1 hover:bg-red-500 hover:text-white"
-                    >
-                      <X size={14} />
-                    </button>
-                  </div>
-                ))
-              )}
+        {sidebarOpen && (
+          <div className="fixed inset-0 z-50 bg-black/70 p-4 lg:hidden">
+            <div className="h-full">
+              <button
+                onClick={() => setSidebarOpen(false)}
+                className="mb-3 rounded-xl bg-white px-3 py-2 font-black text-black"
+              >
+                Close
+              </button>
+              {Sidebar}
             </div>
           </div>
-
-          <label className="mb-2 text-xs font-bold text-gray-400">Subject</label>
-          <select
-            value={subject}
-            onChange={(e) => setSubject(e.target.value)}
-            className="mb-4 rounded-2xl border border-white/10 bg-black/30 p-3 text-white outline-none"
-          >
-            {subjects.map((s) => (
-              <option key={s}>{s}</option>
-            ))}
-          </select>
-
-          <label className="mb-2 text-xs font-bold text-gray-400">Level</label>
-          <select
-            value={grade}
-            onChange={(e) => setGrade(e.target.value)}
-            className="mb-5 rounded-2xl border border-white/10 bg-black/30 p-3 text-white outline-none"
-          >
-            <option>elementary school</option>
-            <option>middle school</option>
-            <option>middle/high school</option>
-            <option>high school</option>
-            <option>college</option>
-          </select>
-
-          <div className="space-y-2 overflow-y-auto">
-            {modes.map((item) => {
-              const Icon = item.icon;
-              return (
-                <button
-                  key={item.id}
-                  onClick={() => setMode(item.id)}
-                  className={`w-full rounded-2xl border p-3 text-left transition ${
-                    mode === item.id
-                      ? "border-cyan-300 bg-cyan-300 text-black"
-                      : "border-white/10 bg-black/20 hover:bg-white/10"
-                  }`}
-                >
-                  <div className="flex items-center gap-3">
-                    <Icon size={19} />
-                    <div>
-                      <p className="font-black">{item.name}</p>
-                      <p className="text-xs opacity-70">{item.desc}</p>
-                    </div>
-                  </div>
-                </button>
-              );
-            })}
-          </div>
-
-          <div className="mt-auto space-y-3 pt-4">
-            <div className="rounded-2xl border border-white/10 bg-black/20 p-4 text-sm text-gray-300">
-              Supports: images, screenshots, .docx, .pptx, .txt, .md.
-            </div>
-          </div>
-        </aside>
+        )}
 
         <div className="flex min-w-0 flex-1 flex-col rounded-[2rem] border border-white/15 bg-black/25 shadow-2xl backdrop-blur-xl">
           <header className="border-b border-white/10 p-5">
@@ -443,20 +499,26 @@ export default function Home() {
                   <Sparkles size={16} />
                   Niu Education
                 </p>
-                <h2 className="text-2xl font-black md:text-4xl">
-                  Homework Tutor Chat
-                </h2>
+                <h2 className="text-2xl font-black md:text-4xl">Homework Tutor Chat</h2>
                 <p className="text-sm text-gray-400">
                   Mode: {mode.toUpperCase()} • Subject: {subject}
                 </p>
               </div>
 
-              <button
-                onClick={startNewChat}
-                className="rounded-2xl border border-white/10 bg-white/10 p-3 hover:bg-white/20"
-              >
-                <Plus />
-              </button>
+              <div className="flex gap-2">
+                <button onClick={() => setSidebarOpen(true)} className="rounded-2xl border border-white/10 bg-white/10 p-3 hover:bg-white/20 lg:hidden">
+                  <Menu />
+                </button>
+                <button onClick={() => sendMessage(undefined, true)} className="rounded-2xl border border-white/10 bg-white/10 p-3 hover:bg-white/20">
+                  <RotateCcw />
+                </button>
+                <button onClick={exportCurrentChat} className="rounded-2xl border border-white/10 bg-white/10 p-3 hover:bg-white/20">
+                  <Download />
+                </button>
+                <button onClick={startNewChat} className="rounded-2xl border border-white/10 bg-white/10 p-3 hover:bg-white/20">
+                  <Plus />
+                </button>
+              </div>
             </div>
           </header>
 
@@ -476,31 +538,16 @@ export default function Home() {
 
           <div className="flex-1 space-y-6 overflow-y-auto p-4 md:p-6">
             {messages.map((message, index) => (
-              <div
-                key={index}
-                className={`flex ${
-                  message.role === "user" ? "justify-end" : "justify-start"
-                }`}
-              >
-                <div
-                  className={`max-w-[90%] rounded-[1.7rem] p-5 leading-7 shadow-xl md:max-w-[78%] ${
-                    message.role === "user"
-                      ? "bg-gradient-to-br from-cyan-300 to-blue-400 text-black"
-                      : "border border-white/10 bg-[#171b2b] text-gray-100"
-                  }`}
-                >
+              <div key={index} className={`flex ${message.role === "user" ? "justify-end" : "justify-start"}`}>
+                <div className={`max-w-[90%] rounded-[1.7rem] p-5 leading-7 shadow-xl md:max-w-[78%] ${
+                  message.role === "user"
+                    ? "bg-gradient-to-br from-cyan-300 to-blue-400 text-black"
+                    : "border border-white/10 bg-[#171b2b] text-gray-100"
+                }`}>
                   <div className="mb-3 flex items-center justify-between gap-4">
-                    <p className="font-black">
-                      {message.role === "user" ? "You" : "🎓 Niu Education"}
-                    </p>
-
+                    <p className="font-black">{message.role === "user" ? "You" : "🎓 Niu Education"}</p>
                     {message.role === "assistant" && (
-                      <button
-                        onClick={() =>
-                          navigator.clipboard.writeText(message.content)
-                        }
-                        className="rounded-xl border border-white/10 p-2 text-gray-300 hover:bg-white/10"
-                      >
+                      <button onClick={() => navigator.clipboard.writeText(message.content)} className="rounded-xl border border-white/10 p-2 text-gray-300 hover:bg-white/10">
                         <Copy size={16} />
                       </button>
                     )}
@@ -509,10 +556,7 @@ export default function Home() {
                   {message.files && message.files.length > 0 && (
                     <div className="mb-4 flex flex-wrap gap-2">
                       {message.files.map((name) => (
-                        <div
-                          key={name}
-                          className="flex items-center gap-2 rounded-xl border border-white/15 bg-black/20 px-3 py-2 text-sm"
-                        >
+                        <div key={name} className="flex items-center gap-2 rounded-xl border border-white/15 bg-black/20 px-3 py-2 text-sm">
                           {fileIcon(name)}
                           {name}
                         </div>
@@ -523,22 +567,14 @@ export default function Home() {
                   {message.previews && message.previews.length > 0 && (
                     <div className="mb-4 grid grid-cols-2 gap-3">
                       {message.previews.map((src, i) => (
-                        <img
-                          key={i}
-                          src={src}
-                          alt="uploaded homework"
-                          className="max-h-64 rounded-2xl border border-white/20 object-cover"
-                        />
+                        <img key={i} src={src} alt="uploaded homework" className="max-h-64 rounded-2xl border border-white/20 object-cover" />
                       ))}
                     </div>
                   )}
 
                   {message.role === "assistant" ? (
                     <div className="markdown-body">
-                      <ReactMarkdown
-                        remarkPlugins={[remarkMath]}
-                        rehypePlugins={[rehypeKatex]}
-                      >
+                      <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>
                         {formatMath(message.content)}
                       </ReactMarkdown>
                     </div>
@@ -569,22 +605,10 @@ export default function Home() {
             <div className="border-t border-white/10 p-4">
               <div className="flex flex-wrap gap-3">
                 {files.map((file, index) => (
-                  <div
-                    key={`${file.name}-${index}`}
-                    className="relative flex items-center gap-3 rounded-2xl border border-white/15 bg-white/10 px-4 py-3"
-                  >
-                    {file.type.startsWith("image/") ? (
-                      <ImageIcon size={18} />
-                    ) : (
-                      fileIcon(file.name)
-                    )}
-                    <span className="max-w-48 truncate text-sm font-bold">
-                      {file.name}
-                    </span>
-                    <button
-                      onClick={() => removeFile(index)}
-                      className="rounded-full bg-red-500 p-1"
-                    >
+                  <div key={`${file.name}-${index}`} className="relative flex items-center gap-3 rounded-2xl border border-white/15 bg-white/10 px-4 py-3">
+                    {file.type.startsWith("image/") ? <ImageIcon size={18} /> : fileIcon(file.name)}
+                    <span className="max-w-48 truncate text-sm font-bold">{file.name}</span>
+                    <button onClick={() => removeFile(index)} className="rounded-full bg-red-500 p-1">
                       <X size={14} />
                     </button>
                   </div>
@@ -625,35 +649,22 @@ export default function Home() {
               />
 
               <div className="flex items-center gap-3">
-                <button
-                  onClick={() => fileInputRef.current?.click()}
-                  className="flex items-center gap-2 rounded-2xl border border-white/15 px-4 py-3 font-bold hover:bg-white/10"
-                >
+                <button onClick={() => fileInputRef.current?.click()} className="flex items-center gap-2 rounded-2xl border border-white/15 px-4 py-3 font-bold hover:bg-white/10">
                   <Paperclip size={18} />
                   Attach
                 </button>
 
-                <button
-                  onClick={() => fileInputRef.current?.click()}
-                  className="hidden items-center gap-2 rounded-2xl border border-white/15 px-4 py-3 font-bold hover:bg-white/10 md:flex"
-                >
+                <button onClick={() => fileInputRef.current?.click()} className="hidden items-center gap-2 rounded-2xl border border-white/15 px-4 py-3 font-bold hover:bg-white/10 md:flex">
                   <ImagePlus size={18} />
                   Upload
                 </button>
 
-                <button
-                  onClick={() => setInput((v) => v + " Explain this easier.")}
-                  className="hidden items-center gap-2 rounded-2xl border border-white/15 px-4 py-3 font-bold hover:bg-white/10 md:flex"
-                >
+                <button onClick={() => setInput((v) => v + " Explain this easier.")} className="hidden items-center gap-2 rounded-2xl border border-white/15 px-4 py-3 font-bold hover:bg-white/10 md:flex">
                   <Wand2 size={18} />
                   Improve
                 </button>
 
-                <button
-                  onClick={() => sendMessage()}
-                  disabled={loading}
-                  className="ml-auto flex items-center gap-2 rounded-2xl bg-gradient-to-r from-cyan-300 via-blue-400 to-purple-400 px-6 py-3 font-black text-black hover:opacity-90 disabled:opacity-60"
-                >
+                <button onClick={() => sendMessage()} disabled={loading} className="ml-auto flex items-center gap-2 rounded-2xl bg-gradient-to-r from-cyan-300 via-blue-400 to-purple-400 px-6 py-3 font-black text-black hover:opacity-90 disabled:opacity-60">
                   Send
                   <Send size={18} />
                 </button>
