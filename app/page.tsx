@@ -19,6 +19,9 @@ import {
   MessageSquare,
   Target,
   Wand2,
+  FileText,
+  Presentation,
+  Image as ImageIcon,
 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkMath from "remark-math";
@@ -53,29 +56,44 @@ const modes = [
 const subjects = [
   "Auto-detect",
   "Math",
+  "Algebra",
+  "Geometry",
+  "Biology",
+  "Chemistry",
   "Science",
   "English",
   "History",
-  "Biology",
-  "Chemistry",
-  "Geometry",
-  "Algebra",
 ];
 
 const starters = [
-  "Explain this like I’m confused",
+  "Explain this easier",
   "Give me hints first",
-  "Make me a study guide",
+  "Make a study guide",
   "Quiz me on this",
-  "Check if my answer is right",
+  "Check my answer",
+  "Make practice problems",
 ];
+
+function formatMath(text: string) {
+  return text
+    .replace(/\\\[/g, "$$")
+    .replace(/\\\]/g, "$$")
+    .replace(/\\\(/g, "$")
+    .replace(/\\\)/g, "$");
+}
+
+function fileIcon(fileName: string) {
+  if (fileName.endsWith(".pptx")) return <Presentation size={18} />;
+  if (fileName.endsWith(".docx") || fileName.endsWith(".txt")) return <FileText size={18} />;
+  return <ImageIcon size={18} />;
+}
 
 export default function Home() {
   const [messages, setMessages] = useState<Message[]>([
     {
       role: "assistant",
       content:
-        "Welcome to **Niu Education** ✨ Upload homework, paste a screenshot, or ask a question. I’ll teach it step by step with clean math.",
+        "Welcome to **Niu Education** ✨ Upload homework, screenshots, Word docs, PowerPoints, or ask a question. I’ll teach it cleanly step by step.",
     },
   ]);
 
@@ -119,20 +137,32 @@ export default function Home() {
   function addFiles(selected: FileList | File[] | null) {
     if (!selected) return;
 
-    const imageFiles = Array.from(selected).filter((file) =>
-      file.type.startsWith("image/")
-    );
+    const accepted = Array.from(selected).filter((file) => {
+      return (
+        file.type.startsWith("image/") ||
+        file.name.endsWith(".docx") ||
+        file.name.endsWith(".pptx") ||
+        file.name.endsWith(".txt") ||
+        file.name.endsWith(".md")
+      );
+    });
 
-    setFiles((prev) => [...prev, ...imageFiles]);
-    setPreviews((prev) => [
-      ...prev,
-      ...imageFiles.map((file) => URL.createObjectURL(file)),
-    ]);
+    setFiles((prev) => [...prev, ...accepted]);
+
+    accepted.forEach((file) => {
+      if (file.type.startsWith("image/")) {
+        setPreviews((prev) => [...prev, URL.createObjectURL(file)]);
+      }
+    });
   }
 
   function removeFile(index: number) {
+    const file = files[index];
     setFiles((prev) => prev.filter((_, i) => i !== index));
-    setPreviews((prev) => prev.filter((_, i) => i !== index));
+
+    if (file?.type.startsWith("image/")) {
+      setPreviews((prev) => prev.slice(1));
+    }
   }
 
   function clearChat() {
@@ -140,7 +170,7 @@ export default function Home() {
       {
         role: "assistant" as const,
         content:
-          "Fresh chat started ✨ Upload homework or ask me anything.",
+          "Fresh chat started ✨ Upload homework, a document, a PowerPoint, or ask me anything.",
       },
     ];
     setMessages(fresh);
@@ -152,11 +182,16 @@ export default function Home() {
 
     if (!text.trim() && files.length === 0) return;
 
+    const imagePreviews = files
+      .filter((f) => f.type.startsWith("image/"))
+      .map((_, i) => previews[i])
+      .filter(Boolean);
+
     const userMessage: Message = {
       role: "user",
-      content: text || "Please help me with this image.",
+      content: text || "Please help me with these files.",
       files: files.map((f) => f.name),
-      previews,
+      previews: imagePreviews,
     };
 
     const nextMessages = [...messages, userMessage];
@@ -204,7 +239,7 @@ export default function Home() {
         ...nextMessages,
         {
           role: "assistant",
-          content: "Something broke. Try again with a clearer screenshot.",
+          content: "Something broke. Try again with a clearer screenshot or smaller file.",
         },
       ]);
     } finally {
@@ -228,7 +263,7 @@ export default function Home() {
             </h1>
 
             <p className="mt-2 text-sm text-gray-300">
-              AI tutor for homework, screenshots, studying, and follow-up questions.
+              Homework, screenshots, Word docs, PowerPoints, study guides, and quizzes.
             </p>
           </div>
 
@@ -238,8 +273,8 @@ export default function Home() {
               <p className="text-xs text-gray-400">Tutor help</p>
             </div>
             <div className="rounded-2xl border border-white/10 bg-black/20 p-3">
-              <p className="text-2xl font-black text-purple-200">AI</p>
-              <p className="text-xs text-gray-400">Step-by-step</p>
+              <p className="text-2xl font-black text-purple-200">DOCS</p>
+              <p className="text-xs text-gray-400">Files supported</p>
             </div>
           </div>
 
@@ -302,7 +337,7 @@ export default function Home() {
             </button>
 
             <div className="rounded-2xl border border-white/10 bg-black/20 p-4 text-sm text-gray-300">
-              Paste screenshots with <b>Command + V</b>. Drag images into the chat too.
+              Supports: images, screenshots, .docx, .pptx, .txt, .md.
             </div>
           </div>
         </aside>
@@ -355,7 +390,7 @@ export default function Home() {
                   className={`max-w-[90%] rounded-[1.7rem] p-5 leading-7 shadow-xl md:max-w-[78%] ${
                     message.role === "user"
                       ? "bg-gradient-to-br from-cyan-300 to-blue-400 text-black"
-                      : "border border-white/10 bg-white/10 text-gray-100"
+                      : "border border-white/10 bg-[#171b2b] text-gray-100"
                   }`}
                 >
                   <div className="mb-3 flex items-center justify-between gap-4">
@@ -375,6 +410,20 @@ export default function Home() {
                     )}
                   </div>
 
+                  {message.files && message.files.length > 0 && (
+                    <div className="mb-4 flex flex-wrap gap-2">
+                      {message.files.map((name) => (
+                        <div
+                          key={name}
+                          className="flex items-center gap-2 rounded-xl border border-white/15 bg-black/20 px-3 py-2 text-sm"
+                        >
+                          {fileIcon(name)}
+                          {name}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
                   {message.previews && message.previews.length > 0 && (
                     <div className="mb-4 grid grid-cols-2 gap-3">
                       {message.previews.map((src, i) => (
@@ -389,12 +438,12 @@ export default function Home() {
                   )}
 
                   {message.role === "assistant" ? (
-                    <div className="prose prose-invert max-w-none prose-headings:text-white prose-p:text-gray-100 prose-strong:text-white">
+                    <div className="markdown-body">
                       <ReactMarkdown
                         remarkPlugins={[remarkMath]}
                         rehypePlugins={[rehypeKatex]}
                       >
-                        {message.content}
+                        {formatMath(message.content)}
                       </ReactMarkdown>
                     </div>
                   ) : (
@@ -406,7 +455,7 @@ export default function Home() {
 
             {loading && (
               <div className="flex justify-start">
-                <div className="rounded-[1.7rem] border border-white/10 bg-white/10 p-5 text-gray-200 shadow-xl">
+                <div className="rounded-[1.7rem] border border-white/10 bg-[#171b2b] p-5 text-gray-200 shadow-xl">
                   <p className="mb-3 font-black">🎓 Niu Education</p>
                   <div className="flex gap-2">
                     <span className="h-3 w-3 animate-bounce rounded-full bg-cyan-300" />
@@ -420,19 +469,25 @@ export default function Home() {
             <div ref={bottomRef} />
           </div>
 
-          {previews.length > 0 && (
+          {files.length > 0 && (
             <div className="border-t border-white/10 p-4">
-              <div className="flex gap-3 overflow-x-auto">
-                {previews.map((src, index) => (
-                  <div key={index} className="relative shrink-0">
-                    <img
-                      src={src}
-                      alt="preview"
-                      className="h-24 w-32 rounded-2xl object-cover"
-                    />
+              <div className="flex flex-wrap gap-3">
+                {files.map((file, index) => (
+                  <div
+                    key={`${file.name}-${index}`}
+                    className="relative flex items-center gap-3 rounded-2xl border border-white/15 bg-white/10 px-4 py-3"
+                  >
+                    {file.type.startsWith("image/") ? (
+                      <ImageIcon size={18} />
+                    ) : (
+                      fileIcon(file.name)
+                    )}
+                    <span className="max-w-48 truncate text-sm font-bold">
+                      {file.name}
+                    </span>
                     <button
                       onClick={() => removeFile(index)}
-                      className="absolute -right-2 -top-2 rounded-full bg-red-500 p-1"
+                      className="rounded-full bg-red-500 p-1"
                     >
                       <X size={14} />
                     </button>
@@ -446,7 +501,7 @@ export default function Home() {
             <input
               ref={fileInputRef}
               type="file"
-              accept="image/png,image/jpeg,image/jpg,image/webp"
+              accept="image/png,image/jpeg,image/jpg,image/webp,.docx,.pptx,.txt,.md"
               multiple
               className="hidden"
               onChange={(e) => addFiles(e.target.files)}
@@ -463,7 +518,7 @@ export default function Home() {
               <textarea
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
-                placeholder="Ask a question, upload homework, paste a screenshot, or say explain this easier..."
+                placeholder="Ask a question, upload homework, attach a PowerPoint/Word doc, paste a screenshot..."
                 className="min-h-20 w-full resize-none bg-transparent p-3 text-white outline-none placeholder:text-gray-400"
                 onKeyDown={(e) => {
                   if (e.key === "Enter" && !e.shiftKey) {
@@ -487,7 +542,7 @@ export default function Home() {
                   className="hidden items-center gap-2 rounded-2xl border border-white/15 px-4 py-3 font-bold hover:bg-white/10 md:flex"
                 >
                   <ImagePlus size={18} />
-                  Screenshot
+                  Upload
                 </button>
 
                 <button
