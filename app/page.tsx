@@ -6,7 +6,7 @@ import {
   CheckCircle, Lightbulb, Zap, GraduationCap, MessageSquare, Target,
   Wand2, FileText, Presentation, Image as ImageIcon, Plus, History,
   Pin, Search, Download, RotateCcw, Menu, Gamepad2, NotebookPen,
-  CalendarCheck, Timer, Trophy, Flame, ExternalLink, Home, Dumbbell,
+  CalendarCheck, Timer, Trophy, Flame, ExternalLink, Home as HomeIcon, Dumbbell,
   Calculator, Music, Star, Pencil, Trash2
 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
@@ -419,7 +419,7 @@ export default function Home() {
 
       <div className="mb-4 grid grid-cols-2 gap-2">
         {[
-          ["chat", Home, "Chat"],
+          ["chat", HomeIcon, "Chat"],
           ["games", Gamepad2, "Games"],
           ["tools", Calculator, "Tools"],
           ["notes", NotebookPen, "Notes"],
