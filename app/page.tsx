@@ -22,6 +22,8 @@ import {
   FileText,
   Presentation,
   Image as ImageIcon,
+  Plus,
+  History,
 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkMath from "remark-math";
@@ -41,6 +43,19 @@ type Message = {
   content: string;
   files?: string[];
   previews?: string[];
+};
+
+type Chat = {
+  id: string;
+  title: string;
+  messages: Message[];
+  createdAt: string;
+};
+
+const starterMessage: Message = {
+  role: "assistant",
+  content:
+    "Welcome to **Niu Education** ✨ Upload homework, screenshots, Word docs, PowerPoints, or ask a question. I’ll teach it cleanly step by step.",
 };
 
 const modes = [
@@ -84,18 +99,21 @@ function formatMath(text: string) {
 
 function fileIcon(fileName: string) {
   if (fileName.endsWith(".pptx")) return <Presentation size={18} />;
-  if (fileName.endsWith(".docx") || fileName.endsWith(".txt")) return <FileText size={18} />;
+  if (fileName.endsWith(".docx") || fileName.endsWith(".txt")) {
+    return <FileText size={18} />;
+  }
   return <ImageIcon size={18} />;
 }
 
+function makeTitle(text: string) {
+  const cleaned = text.trim() || "New homework chat";
+  return cleaned.length > 34 ? cleaned.slice(0, 34) + "..." : cleaned;
+}
+
 export default function Home() {
-  const [messages, setMessages] = useState<Message[]>([
-    {
-      role: "assistant",
-      content:
-        "Welcome to **Niu Education** ✨ Upload homework, screenshots, Word docs, PowerPoints, or ask a question. I’ll teach it cleanly step by step.",
-    },
-  ]);
+  const [messages, setMessages] = useState<Message[]>([starterMessage]);
+  const [chats, setChats] = useState<Chat[]>([]);
+  const [activeChatId, setActiveChatId] = useState<string | null>(null);
 
   const [input, setInput] = useState("");
   const [files, setFiles] = useState<File[]>([]);
@@ -113,13 +131,40 @@ export default function Home() {
   }, [messages, loading]);
 
   useEffect(() => {
-    const saved = localStorage.getItem("niu-education-chat");
-    if (saved) setMessages(JSON.parse(saved));
+    const savedChats = localStorage.getItem("niu-education-chats");
+    if (savedChats) setChats(JSON.parse(savedChats));
   }, []);
 
-  useEffect(() => {
-    localStorage.setItem("niu-education-chat", JSON.stringify(messages));
-  }, [messages]);
+  function saveChats(nextChats: Chat[]) {
+    setChats(nextChats);
+    localStorage.setItem("niu-education-chats", JSON.stringify(nextChats));
+  }
+
+  function saveCurrentChat(nextMessages: Message[]) {
+    const hasRealMessage = nextMessages.some((m) => m.role === "user");
+    if (!hasRealMessage) return;
+
+    const firstUser = nextMessages.find((m) => m.role === "user");
+    const title = makeTitle(firstUser?.content || "New homework chat");
+
+    if (activeChatId) {
+      const updated = chats.map((chat) =>
+        chat.id === activeChatId
+          ? { ...chat, title, messages: nextMessages }
+          : chat
+      );
+      saveChats(updated);
+    } else {
+      const newChat: Chat = {
+        id: crypto.randomUUID(),
+        title,
+        messages: nextMessages,
+        createdAt: new Date().toLocaleString(),
+      };
+      setActiveChatId(newChat.id);
+      saveChats([newChat, ...chats]);
+    }
+  }
 
   useEffect(() => {
     function pasteImage(e: ClipboardEvent) {
@@ -133,6 +178,31 @@ export default function Home() {
     window.addEventListener("paste", pasteImage);
     return () => window.removeEventListener("paste", pasteImage);
   }, []);
+
+  function startNewChat() {
+    setMessages([starterMessage]);
+    setActiveChatId(null);
+    setInput("");
+    setFiles([]);
+    setPreviews([]);
+  }
+
+  function openChat(chat: Chat) {
+    setMessages(chat.messages);
+    setActiveChatId(chat.id);
+    setInput("");
+    setFiles([]);
+    setPreviews([]);
+  }
+
+  function deleteChat(chatId: string) {
+    const updated = chats.filter((chat) => chat.id !== chatId);
+    saveChats(updated);
+
+    if (activeChatId === chatId) {
+      startNewChat();
+    }
+  }
 
   function addFiles(selected: FileList | File[] | null) {
     if (!selected) return;
@@ -157,24 +227,8 @@ export default function Home() {
   }
 
   function removeFile(index: number) {
-    const file = files[index];
     setFiles((prev) => prev.filter((_, i) => i !== index));
-
-    if (file?.type.startsWith("image/")) {
-      setPreviews((prev) => prev.slice(1));
-    }
-  }
-
-  function clearChat() {
-    const fresh = [
-      {
-        role: "assistant" as const,
-        content:
-          "Fresh chat started ✨ Upload homework, a document, a PowerPoint, or ask me anything.",
-      },
-    ];
-    setMessages(fresh);
-    localStorage.setItem("niu-education-chat", JSON.stringify(fresh));
+    setPreviews((prev) => prev.filter((_, i) => i !== index));
   }
 
   async function sendMessage(customText?: string) {
@@ -197,6 +251,8 @@ export default function Home() {
     const nextMessages = [...messages, userMessage];
 
     setMessages(nextMessages);
+    saveCurrentChat(nextMessages);
+
     setInput("");
     setFiles([]);
     setPreviews([]);
@@ -227,21 +283,28 @@ export default function Home() {
 
       const data = await res.json();
 
-      setMessages([
+      const finalMessages = [
         ...nextMessages,
         {
-          role: "assistant",
+          role: "assistant" as const,
           content: data.answer || data.error || "Something went wrong.",
         },
-      ]);
+      ];
+
+      setMessages(finalMessages);
+      saveCurrentChat(finalMessages);
     } catch {
-      setMessages([
+      const finalMessages = [
         ...nextMessages,
         {
-          role: "assistant",
-          content: "Something broke. Try again with a clearer screenshot or smaller file.",
+          role: "assistant" as const,
+          content:
+            "Something broke. Try again with a clearer screenshot or smaller file.",
         },
-      ]);
+      ];
+
+      setMessages(finalMessages);
+      saveCurrentChat(finalMessages);
     } finally {
       setLoading(false);
     }
@@ -253,7 +316,7 @@ export default function Home() {
 
       <section className="mx-auto flex h-screen w-full max-w-7xl gap-5 p-4">
         <aside className="hidden w-80 shrink-0 flex-col rounded-[2rem] border border-white/15 bg-white/10 p-5 shadow-2xl backdrop-blur-xl lg:flex">
-          <div className="mb-6">
+          <div className="mb-5">
             <div className="mb-3 flex h-16 w-16 items-center justify-center rounded-3xl bg-gradient-to-br from-cyan-300 to-purple-400 text-black shadow-xl">
               <GraduationCap size={34} />
             </div>
@@ -267,14 +330,52 @@ export default function Home() {
             </p>
           </div>
 
-          <div className="mb-5 grid grid-cols-2 gap-2">
-            <div className="rounded-2xl border border-white/10 bg-black/20 p-3">
-              <p className="text-2xl font-black text-cyan-200">24/7</p>
-              <p className="text-xs text-gray-400">Tutor help</p>
+          <button
+            onClick={startNewChat}
+            className="mb-4 flex w-full items-center justify-center gap-2 rounded-2xl bg-cyan-300 px-4 py-3 font-black text-black hover:bg-cyan-200"
+          >
+            <Plus size={18} />
+            New chat
+          </button>
+
+          <div className="mb-5 rounded-2xl border border-white/10 bg-black/20 p-3">
+            <div className="mb-3 flex items-center gap-2 font-black">
+              <History size={18} />
+              Recent chats
             </div>
-            <div className="rounded-2xl border border-white/10 bg-black/20 p-3">
-              <p className="text-2xl font-black text-purple-200">DOCS</p>
-              <p className="text-xs text-gray-400">Files supported</p>
+
+            <div className="max-h-44 space-y-2 overflow-y-auto">
+              {chats.length === 0 ? (
+                <p className="text-sm text-gray-400">No saved chats yet.</p>
+              ) : (
+                chats.map((chat) => (
+                  <div
+                    key={chat.id}
+                    className={`group flex items-center gap-2 rounded-xl border p-2 ${
+                      activeChatId === chat.id
+                        ? "border-cyan-300 bg-cyan-300 text-black"
+                        : "border-white/10 bg-white/5"
+                    }`}
+                  >
+                    <button
+                      onClick={() => openChat(chat)}
+                      className="min-w-0 flex-1 text-left"
+                    >
+                      <p className="truncate text-sm font-bold">{chat.title}</p>
+                      <p className="truncate text-xs opacity-70">
+                        {chat.createdAt}
+                      </p>
+                    </button>
+
+                    <button
+                      onClick={() => deleteChat(chat.id)}
+                      className="rounded-lg p-1 hover:bg-red-500 hover:text-white"
+                    >
+                      <X size={14} />
+                    </button>
+                  </div>
+                ))
+              )}
             </div>
           </div>
 
@@ -328,14 +429,6 @@ export default function Home() {
           </div>
 
           <div className="mt-auto space-y-3 pt-4">
-            <button
-              onClick={clearChat}
-              className="flex w-full items-center justify-center gap-2 rounded-2xl border border-white/15 px-4 py-3 font-bold hover:bg-white/10"
-            >
-              <Trash2 size={18} />
-              Clear chat
-            </button>
-
             <div className="rounded-2xl border border-white/10 bg-black/20 p-4 text-sm text-gray-300">
               Supports: images, screenshots, .docx, .pptx, .txt, .md.
             </div>
@@ -358,9 +451,12 @@ export default function Home() {
                 </p>
               </div>
 
-              <div className="hidden rounded-2xl border border-white/10 bg-white/10 p-3 md:block">
-                <Calculator className="text-cyan-200" />
-              </div>
+              <button
+                onClick={startNewChat}
+                className="rounded-2xl border border-white/10 bg-white/10 p-3 hover:bg-white/20"
+              >
+                <Plus />
+              </button>
             </div>
           </header>
 
