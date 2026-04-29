@@ -6,13 +6,13 @@ import {
   CheckCircle, Lightbulb, Zap, GraduationCap, MessageSquare, Target,
   Wand2, FileText, Presentation, Image as ImageIcon, Plus, History,
   Pin, Search, Download, RotateCcw, Menu, NotebookPen, CalendarCheck,
-  Calculator, ExternalLink, Home as HomeIcon, Pencil, Trash2
+  Calculator, Home as HomeIcon, Pencil, Trash2, LogOut
 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
 
-type Tab = "chat" | "tools" | "notes" | "planner" | "links";
+type Tab = "chat" | "tools" | "notes" | "planner";
 type Mode = "teach" | "hints" | "check" | "study" | "quiz" | "quick" | "explain";
 
 type Message = {
@@ -36,6 +36,11 @@ type Task = {
   id: string;
   text: string;
   done: boolean;
+};
+
+type Account = {
+  username: string;
+  password: string;
 };
 
 const starterMessage: Message = {
@@ -116,7 +121,21 @@ function fallbackTitle(messages: Message[]) {
   return cleaned.length > 45 ? cleaned.slice(0, 45) + "..." : cleaned;
 }
 
+function fileToDataUrl(file: File): Promise<string> {
+  return new Promise((resolve) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result));
+    reader.readAsDataURL(file);
+  });
+}
+
 export default function Home() {
+  const [loggedInUser, setLoggedInUser] = useState("");
+  const [authMode, setAuthMode] = useState<"login" | "signup">("login");
+  const [authUsername, setAuthUsername] = useState("");
+  const [authPassword, setAuthPassword] = useState("");
+  const [authError, setAuthError] = useState("");
+
   const [tab, setTab] = useState<Tab>("chat");
 
   const [messages, setMessages] = useState<Message[]>([starterMessage]);
@@ -141,6 +160,45 @@ export default function Home() {
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const activeChatIdRef = useRef<string | null>(null);
 
+  const userKey = loggedInUser ? `niu-user-${loggedInUser}` : "";
+
+  useEffect(() => {
+    const current = localStorage.getItem("niu-current-user");
+    if (current) setLoggedInUser(current);
+  }, []);
+
+  useEffect(() => {
+    if (!loggedInUser) return;
+
+    const raw = localStorage.getItem(userKey);
+    if (raw) {
+      const data = JSON.parse(raw);
+      setChats(data.chats || []);
+      setNotes(data.notes || "");
+      setTasks(data.tasks || []);
+    } else {
+      setChats([]);
+      setNotes("");
+      setTasks([]);
+    }
+
+    setMessages([starterMessage]);
+    setActiveChatId(null);
+    activeChatIdRef.current = null;
+  }, [loggedInUser]);
+
+  useEffect(() => {
+    if (!loggedInUser) return;
+    localStorage.setItem(
+      userKey,
+      JSON.stringify({
+        chats,
+        notes,
+        tasks,
+      })
+    );
+  }, [chats, notes, tasks, loggedInUser]);
+
   useEffect(() => {
     activeChatIdRef.current = activeChatId;
   }, [activeChatId]);
@@ -148,24 +206,6 @@ export default function Home() {
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, loading]);
-
-  useEffect(() => {
-    const savedChats = localStorage.getItem("niu-education-chats-v5");
-    const savedNotes = localStorage.getItem("niu-education-notes");
-    const savedTasks = localStorage.getItem("niu-education-tasks");
-
-    if (savedChats) setChats(JSON.parse(savedChats));
-    if (savedNotes) setNotes(savedNotes);
-    if (savedTasks) setTasks(JSON.parse(savedTasks));
-  }, []);
-
-  useEffect(() => {
-    localStorage.setItem("niu-education-notes", notes);
-  }, [notes]);
-
-  useEffect(() => {
-    localStorage.setItem("niu-education-tasks", JSON.stringify(tasks));
-  }, [tasks]);
 
   useEffect(() => {
     function pasteImage(e: ClipboardEvent) {
@@ -196,9 +236,65 @@ export default function Home() {
       });
   }, [chats, chatSearch]);
 
+  function getAccounts(): Account[] {
+    return JSON.parse(localStorage.getItem("niu-accounts") || "[]");
+  }
+
+  function saveAccounts(accounts: Account[]) {
+    localStorage.setItem("niu-accounts", JSON.stringify(accounts));
+  }
+
+  function handleAuth() {
+    setAuthError("");
+
+    const username = authUsername.trim().toLowerCase();
+    const password = authPassword.trim();
+
+    if (!username || !password) {
+      setAuthError("Enter a username and password.");
+      return;
+    }
+
+    const accounts = getAccounts();
+
+    if (authMode === "signup") {
+      if (accounts.some((a) => a.username === username)) {
+        setAuthError("That username already exists.");
+        return;
+      }
+
+      saveAccounts([...accounts, { username, password }]);
+      localStorage.setItem("niu-current-user", username);
+      setLoggedInUser(username);
+      return;
+    }
+
+    const found = accounts.find(
+      (a) => a.username === username && a.password === password
+    );
+
+    if (!found) {
+      setAuthError("Wrong username or password.");
+      return;
+    }
+
+    localStorage.setItem("niu-current-user", username);
+    setLoggedInUser(username);
+  }
+
+  function logout() {
+    localStorage.removeItem("niu-current-user");
+    setLoggedInUser("");
+    setAuthUsername("");
+    setAuthPassword("");
+    setMessages([starterMessage]);
+    setChats([]);
+    setNotes("");
+    setTasks([]);
+  }
+
   function saveChats(nextChats: Chat[]) {
     setChats(nextChats);
-    localStorage.setItem("niu-education-chats-v5", JSON.stringify(nextChats));
   }
 
   function upsertChat(nextMessages: Message[], title?: string, summary?: string) {
@@ -293,7 +389,7 @@ export default function Home() {
     downloadText("niu-education-chat.md", text);
   }
 
-  function addFiles(selected: FileList | File[] | null) {
+  async function addFiles(selected: FileList | File[] | null) {
     if (!selected) return;
 
     const accepted = Array.from(selected).filter((file) => {
@@ -308,11 +404,12 @@ export default function Home() {
 
     setFiles((prev) => [...prev, ...accepted]);
 
-    accepted.forEach((file) => {
+    for (const file of accepted) {
       if (file.type.startsWith("image/")) {
-        setPreviews((prev) => [...prev, URL.createObjectURL(file)]);
+        const dataUrl = await fileToDataUrl(file);
+        setPreviews((prev) => [...prev, dataUrl]);
       }
-    });
+    }
   }
 
   function removeFile(index: number) {
@@ -335,16 +432,11 @@ export default function Home() {
 
     setTab("chat");
 
-    const imagePreviews = files
-      .filter((f) => f.type.startsWith("image/"))
-      .map((_, i) => previews[i])
-      .filter(Boolean);
-
     const userMessage: Message = {
       role: "user",
       content: text || "Please help me with these files.",
       files: files.map((f) => f.name),
-      previews: imagePreviews,
+      previews,
     };
 
     const nextMessages = regenerate
@@ -417,6 +509,82 @@ export default function Home() {
     setTaskInput("");
   }
 
+  if (!loggedInUser) {
+    return (
+      <main className="min-h-screen bg-[#050716] text-white">
+        <div className="fixed inset-0 -z-10 bg-[radial-gradient(circle_at_top_left,#22d3ee80,transparent_30%),radial-gradient(circle_at_top_right,#a855f780,transparent_32%),radial-gradient(circle_at_bottom,#f9731680,transparent_35%)]" />
+
+        <section className="mx-auto flex min-h-screen max-w-6xl items-center justify-center p-6">
+          <div className="grid w-full gap-8 md:grid-cols-2">
+            <div className="flex flex-col justify-center">
+              <div className="mb-5 flex h-20 w-20 items-center justify-center rounded-3xl bg-gradient-to-br from-cyan-300 to-purple-400 text-black">
+                <GraduationCap size={42} />
+              </div>
+              <h1 className="text-6xl font-black">Niu Education</h1>
+              <p className="mt-4 text-xl text-gray-300">
+                Sign in to save your chats, notes, planner tasks, and uploaded photo previews on this device.
+              </p>
+            </div>
+
+            <div className="rounded-[2rem] border border-white/15 bg-white/10 p-6 shadow-2xl backdrop-blur-xl">
+              <h2 className="mb-2 text-4xl font-black">
+                {authMode === "login" ? "Log in" : "Sign up"}
+              </h2>
+              <p className="mb-6 text-gray-300">
+                {authMode === "login"
+                  ? "Welcome back."
+                  : "Create your Niu Education account."}
+              </p>
+
+              <input
+                value={authUsername}
+                onChange={(e) => setAuthUsername(e.target.value)}
+                placeholder="Username"
+                className="mb-3 w-full rounded-2xl border border-white/10 bg-black/30 p-4 outline-none"
+              />
+
+              <input
+                value={authPassword}
+                onChange={(e) => setAuthPassword(e.target.value)}
+                placeholder="Password"
+                type="password"
+                className="mb-3 w-full rounded-2xl border border-white/10 bg-black/30 p-4 outline-none"
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") handleAuth();
+                }}
+              />
+
+              {authError && (
+                <p className="mb-3 rounded-xl bg-red-500/20 p-3 text-red-200">
+                  {authError}
+                </p>
+              )}
+
+              <button
+                onClick={handleAuth}
+                className="w-full rounded-2xl bg-cyan-300 p-4 font-black text-black hover:bg-cyan-200"
+              >
+                {authMode === "login" ? "Log in" : "Create account"}
+              </button>
+
+              <button
+                onClick={() => {
+                  setAuthMode(authMode === "login" ? "signup" : "login");
+                  setAuthError("");
+                }}
+                className="mt-4 w-full rounded-2xl border border-white/15 p-4 font-bold hover:bg-white/10"
+              >
+                {authMode === "login"
+                  ? "Need an account? Sign up"
+                  : "Already have an account? Log in"}
+              </button>
+            </div>
+          </div>
+        </section>
+      </main>
+    );
+  }
+
   const Sidebar = (
     <aside className="flex h-full w-80 shrink-0 flex-col rounded-[2rem] border border-white/15 bg-white/10 p-5 shadow-2xl backdrop-blur-xl">
       <div className="mb-5">
@@ -426,7 +594,7 @@ export default function Home() {
 
         <h1 className="text-4xl font-black leading-tight">Niu Education</h1>
         <p className="mt-2 text-sm text-gray-300">
-          AI homework, study tools, notes, planner, docs, slides, and your personal school hub.
+          Logged in as <b>{loggedInUser}</b>
         </p>
       </div>
 
@@ -443,7 +611,6 @@ export default function Home() {
           ["tools", Calculator, "Tools"],
           ["notes", NotebookPen, "Notes"],
           ["planner", CalendarCheck, "Planner"],
-          ["links", ExternalLink, "Hub"],
         ].map(([id, Icon, label]: any) => (
           <button
             key={id}
@@ -571,6 +738,13 @@ export default function Home() {
           );
         })}
       </div>
+
+      <button
+        onClick={logout}
+        className="mt-4 flex items-center justify-center gap-2 rounded-2xl border border-white/15 p-3 font-bold hover:bg-white/10"
+      >
+        <LogOut size={18} /> Log out
+      </button>
     </aside>
   );
 
@@ -735,7 +909,9 @@ export default function Home() {
     return (
       <div className="flex-1 overflow-y-auto p-6">
         <h2 className="mb-2 text-4xl font-black">Notes</h2>
-        <p className="mb-6 text-gray-300">Private notes saved on this device.</p>
+        <p className="mb-6 text-gray-300">
+          Saved to your account on this browser.
+        </p>
 
         <textarea
           value={notes}
@@ -751,7 +927,9 @@ export default function Home() {
     return (
       <div className="flex-1 overflow-y-auto p-6">
         <h2 className="mb-2 text-4xl font-black">Homework Planner</h2>
-        <p className="mb-6 text-gray-300">Track homework and study goals.</p>
+        <p className="mb-6 text-gray-300">
+          Saved to your account on this browser.
+        </p>
 
         <div className="mb-5 flex gap-3">
           <input
@@ -759,6 +937,9 @@ export default function Home() {
             onChange={(e) => setTaskInput(e.target.value)}
             placeholder="Add homework task..."
             className="flex-1 rounded-2xl bg-black/30 p-4 outline-none"
+            onKeyDown={(e) => {
+              if (e.key === "Enter") addTask();
+            }}
           />
           <button
             onClick={addTask}
@@ -798,37 +979,6 @@ export default function Home() {
     );
   }
 
-  function LinksTab() {
-    return (
-      <div className="flex-1 overflow-y-auto p-6">
-        <h2 className="mb-2 text-4xl font-black">Niu Hub</h2>
-        <p className="mb-6 text-gray-300">
-          Future Niu Education pages and tools can go here.
-        </p>
-
-        <div className="grid gap-4 md:grid-cols-3">
-          <div className="rounded-3xl border border-white/10 bg-white/10 p-6">
-            <BookOpen className="mb-4 text-cyan-300" size={30} />
-            <p className="text-2xl font-black">Flashcards</p>
-            <p className="mt-2 text-gray-300">Coming soon: AI flashcard maker.</p>
-          </div>
-
-          <div className="rounded-3xl border border-white/10 bg-white/10 p-6">
-            <Pencil className="mb-4 text-purple-300" size={30} />
-            <p className="text-2xl font-black">Essay Lab</p>
-            <p className="mt-2 text-gray-300">Coming soon: essay outlines and drafts.</p>
-          </div>
-
-          <div className="rounded-3xl border border-white/10 bg-white/10 p-6">
-            <CalendarCheck className="mb-4 text-orange-300" size={30} />
-            <p className="text-2xl font-black">Study Dashboard</p>
-            <p className="mt-2 text-gray-300">Coming soon: progress, streaks, and goals.</p>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
   return (
     <main className="min-h-screen overflow-hidden bg-[#050716] text-white">
       <div className="fixed inset-0 -z-10 bg-[radial-gradient(circle_at_top_left,#22d3ee80,transparent_30%),radial-gradient(circle_at_top_right,#a855f780,transparent_32%),radial-gradient(circle_at_bottom,#f9731680,transparent_35%)]" />
@@ -860,7 +1010,6 @@ export default function Home() {
                   {tab === "tools" && "Study Tools"}
                   {tab === "notes" && "Notes"}
                   {tab === "planner" && "Planner"}
-                  {tab === "links" && "Niu Hub"}
                 </h2>
                 <p className="text-sm text-gray-400">
                   Mode: {mode.toUpperCase()} • Subject: {subject}
@@ -900,7 +1049,6 @@ export default function Home() {
           {tab === "tools" && <ToolsTab />}
           {tab === "notes" && <NotesTab />}
           {tab === "planner" && <PlannerTab />}
-          {tab === "links" && <LinksTab />}
 
           {tab === "chat" && files.length > 0 && (
             <div className="border-t border-white/10 p-4">
